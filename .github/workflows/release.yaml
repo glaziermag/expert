@@ -2,7 +2,8 @@ name: Release Expert
 on:
   push:
     branches:
-      - main
+      - proof-base
+      - proof-fix
 
 permissions:
   contents: read
@@ -23,80 +24,30 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        id: release
-
-  draft:
-    name: draft
-    needs: release
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    runs-on: ubuntu-latest
-    if: ${{ needs.release.outputs.release_created }}
-    steps:
-      - env:
-          TAG_NAME: ${{ needs.release.outputs.tag_name }}
-        run: gh release edit "${TAG_NAME}" --draft=true --repo='expert-lsp/expert'
-
-  build:
-    needs: [release, draft]
-    runs-on: macos-14
-    permissions:
-      contents: write
-    if: ${{ needs.release.outputs.release_created }}
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
-        with:
-          otp-version: "27.3.4.1"
-          elixir-version: "1.17.3"
-          version-type: strict
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: "0.15.2"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - env:
-          MIX_ENV: prod
-        run: just burrito
-      - name: Create Checksum
+      - id: release
+        name: "[fork-only] stand-in for release-please (outputs of a 0.2.0 release)"
         run: |
-          cd ./apps/expert/burrito_out
-          chmod +x ./*
-          shasum -a 256 ./* > expert_checksums.txt
-          cd ../../../
-      - name: Upload to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.token }}
-          TAG_NAME: ${{ needs.release.outputs.tag_name }}
-        run: gh release upload "${TAG_NAME}" ./apps/expert/burrito_out/*
+          {
+            echo "release_created=true"
+            echo "tag_name=v0.2.0"
+            echo "major=0"
+            echo "minor=2"
+            echo "patch=0"
+          } >> "$GITHUB_OUTPUT"
 
   publish:
     name: publish
-    needs: [release, draft, build]
+    needs: [release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        if: ${{ needs.release.outputs.release_created }}
-        id: app-token
-        with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.PRIVATE_KEY }}
-          permission-contents: write
-          permission-issues: write
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ needs.release.outputs.release_created }}
         with:
           persist-credentials: true
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ github.token }}
 
       - name: Create release branch
         shell: bash
@@ -114,12 +65,13 @@ jobs:
         if: ${{ needs.release.outputs.release_created }}
         env:
           LABEL: v${{ needs.release.outputs.major }}.${{  needs.release.outputs.minor }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           gh label create "release:backport $LABEL"
 
       - name: Publish draft release
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.release.outputs.tag_name }}
-        run: gh release edit "${TAG_NAME}" --draft=false --repo='expert-lsp/expert'
+        run: |
+          echo "[fork-only] would run gh release edit ${TAG_NAME} --draft=false"
